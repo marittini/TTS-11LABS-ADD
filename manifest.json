@@ -3,8 +3,8 @@
   "version": 1,
   "config": {
     "name": "ElevenLabs TTS Message Controls",
-    "version": "4.3.3",
-    "description": "Game/RP/Convo scoped ElevenLabs TTS controls; AI-only audio cue display and translation protection.",
+    "version": "4.3.6",
+    "description": "Game/RP/Convo TTS; request-based instruction injection, Extension Drawer compatibility, mobile voice settings.",
     "runtime": "client",
     "enabled": false,
     "capabilities": [
