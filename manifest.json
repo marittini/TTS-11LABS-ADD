@@ -3,7 +3,7 @@
   "version": 1,
   "config": {
     "name": "ElevenLabs TTS Message Controls",
-    "version": "4.3.6",
+    "version": "4.3.7",
     "description": "Game/RP/Convo TTS; request-based instruction injection, Extension Drawer compatibility, mobile voice settings.",
     "runtime": "client",
     "enabled": false,
