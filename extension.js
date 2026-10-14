@@ -1,8 +1,7 @@
 (function (root) {
   'use strict';
   const TAGS = ['annoyed','sighs','sigh','happy','sad','angry','excited','surprised','curious','crying','laughs','laughing','chuckles','whispers','whispering','shouts','shouting','sarcastic','mischievously','clears throat','exhales','short pause','long pause','thoughtful'];
-  const CUE_TAGS = [...TAGS,'화남','슬픔','기쁨','한숨','생각에 잠겨','짧은 멈춤','긴 멈춤','장난스럽게','헛기침','웃음','속삭임','분노','울음','놀람','당황','차분하게','흥분','미소','sobbing','giggles','giggling','gasps','gasp','breathes','inhales','pause','calm','nervous','frustrated','softly','confused','disappointed','cheerful','serious'];
-  const cuePattern = '\\[(?:'+CUE_TAGS.join('|')+')\\]';
+  const cuePattern = String.raw`\[[^\]\r\n]*\]`;
   const emotion = new RegExp(cuePattern+'[ \t]*','gi');
   const supportedMode = mode => ['game','roleplay','conversation'].includes(mode);
   const wrapper = /<\/?audio_(?:character|persona)\b[^>]*>/gi;
@@ -57,7 +56,7 @@
   function instruction(mode, participants, rpMode='tagged') {
     if(!supportedMode(mode))return '';
     const cast=participants.map(p=>({kind:p.kind,id:p.id,name:p.name}));
-    const shared='[ElevenLabs TTS output instructions]\nSpeech uses ElevenLabs v4. Add context-appropriate inline audio delivery cues in square brackets to spoken dialogue only. Examples include [annoyed], [sigh], [short pause], [chuckles], [thoughtful], [whispering], Use only these audio cue names so ordinary bracketed content remains visible: annoyed, sighs, sigh, happy, sad, angry, excited, surprised, curious, crying, laughs, laughing, chuckles, whispers, whispering, shouts, shouting, sarcastic, mischievously, clears throat, exhales, short pause, long pause, thoughtful, sobbing, giggles, giggling, gasps, gasp, breathes, inhales, pause, calm, nervous, frustrated, softly, confused, disappointed, cheerful, serious. Keep cues in English, brief and relevant, without changing the meaning of the dialogue. Do not use tags in narration or speaker/command fields.\n';
+    const shared='[ElevenLabs TTS output instructions]\nSpeech uses ElevenLabs v4. Add context-appropriate inline audio delivery cues in square brackets to spoken dialogue only. Examples include [annoyed], [sigh], [short pause], [chuckles], [thoughtful], [whispering], These examples are not a whitelist: use other suitable expressive delivery, emotion, vocalization and pacing tags supported by the model. Keep cues in English, brief and relevant, without changing the meaning of the dialogue. Do not use tags in narration or speaker/command fields.\n';
     const tagged=mode==='roleplay'&&rpMode==='tagged';
     return shared+(tagged?
       'Wrap each spoken line in <audio_character id="ACTUAL_ID">"dialogue"</audio_character> or <audio_persona id="ACTUAL_ID">"dialogue"</audio_persona>. Enclose the entire dialogue body, including audio cues, in one pair of ASCII double quotes. Use the exact participant ID listed below. Attribute quotes are separate from dialogue quotes. Do not nest wrappers, add HTML/Markdown inside them, or style tag names or id attributes. Narration stays outside wrappers. Write Persona dialogue only when the existing RP rules allow it. Never use an ID or character name as a tag name. Check opening/closing tag names, IDs and dialogue quotes before returning your answer.\n':
@@ -74,7 +73,7 @@
   'use strict';
 
   const EXT_ID = 'marinara-elevenlabs-multilingual-override';
-  const VERSION = 'v4.3.3';
+  const VERSION = 'v4.3.6';
 
   const SETTINGS_KEY = 'marinara.elevenlabs.multilingual.override.v1';
   const RUNTIME_CACHE_KEY = `${EXT_ID}.runtimeCache`;
@@ -426,7 +425,7 @@
       `#${PANEL_ID} button{cursor:pointer;}`,
       `#${PANEL_ID} button:disabled{cursor:not-allowed;opacity:0.5;}`,
       `@media(max-width:640px){#${PANEL_ID} .m-assignment{grid-template-columns:1fr;}#${PANEL_ID} .m-assignment button{justify-self:end;}}`,
-    ].join('\n');
+    ].join('\n')+"#marinara-elevenlabs-multilingual-override-panel .m-card{padding:18px;border-radius:16px;gap:14px;background:var(--card,#20212b)}\n#marinara-elevenlabs-multilingual-override-panel .m-title{font-size:13px;font-weight:650}\n#marinara-elevenlabs-multilingual-override-panel .m-sub,#marinara-elevenlabs-multilingual-override-panel .m-status{font-size:11px;line-height:1.65}\n#marinara-elevenlabs-multilingual-override-panel .m-section{padding-top:14px;gap:10px}\n#marinara-elevenlabs-multilingual-override-panel .m-row{gap:7px}\n#marinara-elevenlabs-multilingual-override-panel select,#marinara-elevenlabs-multilingual-override-panel button,#marinara-elevenlabs-multilingual-override-panel input[type=password],#marinara-elevenlabs-multilingual-override-panel input[type=text]{font-size:12px;min-height:36px;border-radius:9px;padding:7px 10px;max-width:100%;min-width:0}\n#marinara-elevenlabs-multilingual-override-panel input[type=range]{accent-color:#a79afa}\n#marinara-elevenlabs-multilingual-override-panel .m-assignment{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto}\n@media(max-width:640px){#marinara-elevenlabs-multilingual-override-panel .m-assignment{grid-template-columns:1fr}}";
 
     document.head.appendChild(style);
   }
@@ -3401,6 +3400,8 @@
   const ROOM_LS='marinara.tts.rooms.v430';
   let roomOptions;try{roomOptions=JSON.parse(localStorage.getItem(ROOM_LS)||'{}');}catch{roomOptions={};}
   const views=new Map(),viewerSources=new WeakMap();let uiRoom=null;
+  let instructionState=null;
+  const master={enabled:null,busy:false,refresh:null,client:null,unsubscribe:null,reloadTimer:null};
   function roomSettings(id=activeChatId()){return {...opts,...(id&&roomOptions[id]||{})};}
   function saveRoom(patch,id=activeChatId()){if(!id){notice(new Error('방을 연 다음 음성 설정을 변경하세요.'));return false;}try{roomOptions=JSON.parse(localStorage.getItem(ROOM_LS)||'{}');}catch{}roomOptions[id]={...(roomOptions[id]||{}),...patch};localStorage.setItem(ROOM_LS,JSON.stringify(roomOptions));return true;}
   lastEnabled = enabled();
@@ -3486,17 +3487,20 @@
     try{return await providerPromise;}catch(e){providerPromise=null;throw e;}
   }
   async function prepareGeneration(body) {
-    if(extensionSettings().enabled===false||!C.supportedMode(T.getMode())||!body.chatId||body.chatId!==activeChatId()||agentRequest(body))return body;
+    if(extensionSettings().enabled===false||!body?.chatId||agentRequest(body))return body;
     const ctx=await context(body.chatId,true);
     if(!C.supportedMode(ctx.chat.mode))return body;
-    await filters(ctx.allCharacterIds,ctx.allSpeakerIds);
-    // Native TTS OFF means no speech instructions; history wrappers are still excluded.
+    // The request chat is authoritative, independent of launcher visibility
+    // or a stale active-chat localStorage value. Display migrations run at boot.
+    // Native TTS OFF means no speech instructions.
     const cfg=await api('/tts/config');
+    instructionState={chatId:body.chatId,mode:ctx.chat.mode,enabled:!!cfg.enabled};updateMaster(cfg);
     if(!cfg.enabled)return body;
     // Speech connection validation/model changes belong to the later TTS request.
     const guide=C.instruction(ctx.chat.mode,ctx.participants,roomSettings(body.chatId).rpMode);
     const meta=typeof ctx.chat.metadata==='string'?JSON.parse(ctx.chat.metadata||'{}'):(ctx.chat.metadata||{});
     const preserveSmart=ctx.chat.mode==='roleplay'&&!body.generationGuide?.trim()&&meta.groupResponseOrder==='smart';
+    if(String(body.generationGuide||'').includes('[ElevenLabs TTS output instructions]'))return body;
     return {...body,...(preserveSmart?{smartResponse:true}:{}),generationGuide:[body.generationGuide,guide].filter(Boolean).join('\n\n')};
   }
   function normal(text) {
@@ -3564,11 +3568,11 @@
     return unique.length===1?{...payload,text:unique[0]}:payload;
   }
   function activeChatId() {
-    const stored=localStorage.getItem('marinara-active-chat-id');if(stored)return stored;
-    for(const el of document.querySelectorAll('[data-message-id]')) {
+    // Prefer the actual chat's React data to a stale cross-extension storage key.
+    for(const el of document.querySelectorAll('[data-component="ChatArea.Roleplay"] [data-message-id],[data-component="ChatArea.Conversation"] [data-message-id]')) {
       const m=reactMessage(el)||messages.get(T.getCanonicalMessageId(el)); if(m?.chatId)return m.chatId;
     }
-    return null;
+    return localStorage.getItem('marinara-active-chat-id')||null;
   }
   function reactMessage(el) {
     const k=Object.keys(el).find(k=>k.startsWith('__reactFiber$')); let f=k?el[k]:null;
@@ -3604,10 +3608,9 @@
   }
   const fetchWrapper=async(input,init)=>{
     if(stopped||extensionSettings().enabled===false)return baseFetch(input,init);
-    const url=new URL(typeof input==='string'?input:input.url,location.href);
+    const url=new URL(typeof input==='string'?input:(input instanceof URL?input.href:input.url),location.href);
     const method=String(init?.method||(input instanceof Request?input.method:'GET')).toUpperCase();
     if(url.origin!==location.origin)return baseFetch(input,init);
-    if(!C.supportedMode(T.getMode()))return baseFetch(input,init);
     if(method==='POST'&&(url.pathname==='/api/generate'||url.pathname==='/api/generate/')) {
       let changed,body;
       try {
@@ -3619,10 +3622,11 @@
       if(init?.signal?.aborted)throw new DOMException('요청 취소','AbortError');
       // Forward exactly once; preparation failure must never block main AI generation.
       // Network/model failures after dispatch are not retried here.
-      const r=await baseFetch(input,changed?{...init,method,headers:headers(init?.headers||(input instanceof Request?input.headers:undefined)),body:JSON.stringify(changed)}:init);
-      if(changed!==body&&r.headers.get('content-type')?.includes('text/event-stream'))void observeStream(r,contexts.get(body.chatId)).catch(notice);
+      const r=await baseFetch(input,changed&&changed!==body?{...init,method,headers:headers(init?.headers||(input instanceof Request?input.headers:undefined)),body:JSON.stringify(changed)}:init);
+      if(changed&&changed!==body&&r.headers.get('content-type')?.includes('text/event-stream'))void observeStream(r,contexts.get(body.chatId)).catch(notice);
       return r;
     }
+    if(!C.supportedMode(T.getMode()))return baseFetch(input,init);
     if(method==='POST'&&url.pathname==='/api/tts/speak') {
       if(!enabled())return baseFetch(input,init);
       try {
@@ -3653,12 +3657,12 @@
     }
     const response=await baseFetch(input,init);
     if(method==='GET'&&url.pathname==='/api/tts/config'&&response.ok){
-      const cfg=await response.clone().json();
+      const cfg=await response.clone().json();if(!master.busy&&typeof cfg?.enabled==='boolean')updateMaster(cfg);
       // The native chunker accepts this runtime option; it is not a persisted TTS schema field.
       return new Response(JSON.stringify({...cfg,skipBracketedText:false,preserveEmotionIndicators:true}),{status:response.status,headers:response.headers});
     }
     if(method==='GET'&&/^\/api\/chats\/[^/]+\/messages$/.test(url.pathname)&&response.ok)void response.clone().json().then(remember).catch(()=>{});
-    if(['POST','PATCH','PUT'].includes(method)&&/^\/api\/(?:connections|tts\/config)/.test(url.pathname))providerPromise=null;
+    if(['POST','PATCH','PUT'].includes(method)&&/^\/api\/(?:connections|tts\/config)/.test(url.pathname)){providerPromise=null;if(url.pathname==='/api/tts/config'&&response.ok&&!master.busy)void refreshMaster();}
     return response;
   };
   window.fetch=fetchWrapper;
@@ -3798,9 +3802,9 @@
   }
   function scan() {
     scheduled=false;if(stopped)return;
-    if(!C.supportedMode(T.getMode())){restoreDom();document.querySelectorAll('.mari-tts-rp-toolbar').forEach(e=>e.remove());return;}
+    if(!C.supportedMode(T.getMode())){restoreDom();document.querySelectorAll('.mari-tts-rp-toolbar,#mari-tts-room-panel').forEach(e=>e.remove());return;}
     const isEnabled=enabled();
-    const room=activeChatId();if(room!==uiRoom){uiRoom=room;if(T.getPlaybackKey?.()?.startsWith('dialogue-'))T.stopAudio();restoreDom();document.querySelectorAll('.mari-tts-rp-popover').forEach(e=>e.hidden=true);}
+    const room=activeChatId();if(room!==uiRoom){uiRoom=room;if(T.getPlaybackKey?.()?.startsWith('dialogue-'))T.stopAudio();restoreDom();closeRoomPanel();}
     if(isEnabled!==lastEnabled){lastEnabled=isEnabled;if(!isEnabled)restoreDom();else void filters().catch(notice);}
     for(const [source,state] of views)if(!source.isConnected)releaseView(source,state);
     mountToolbar();
@@ -3847,62 +3851,137 @@
   function queueScan(){if(scheduled||stopped)return;scheduled=true;requestAnimationFrame(scan);}
   function setRpMode(value){if(!saveRoom({rpMode:value==='native'?'native':'tagged'}))return;if(T.getPlaybackKey?.()?.startsWith('dialogue-'))T.stopAudio();restoreDom();queueScan();paintPanel();}
   function setRoomControls(value){if(saveRoom({enabled:value==='enabled'})){restoreDom();queueScan();paintPanel();}}
-  function modeSelect(){const select=document.createElement('select');select.className='mari-tts-rp-mode-select';select.setAttribute('aria-label','RP 음성 화자 구분 방식');for(const [value,label] of [['tagged','태그별 화자 · 캐릭터/페르소나'],['native','메시지 화자 · 한 보이스']]){const option=document.createElement('option');option.value=value;option.textContent=label;select.append(option);}select.value=roomSettings().rpMode;select.onchange=()=>setRpMode(select.value);return select;}
+  style.textContent+=".mari-tts-room-launcher{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--border,#383946);border-radius:11px;background:var(--popover,#20212b);color:var(--popover-foreground,#e9e9f1);box-shadow:0 3px 12px #0002;cursor:pointer;touch-action:none}\n.mari-tts-room-launcher svg{width:17px;height:17px}\n#mari-tts-room-panel{--tts-accent:#a79afa;--tts-ink:var(--foreground,#eeeef5);--tts-muted:var(--muted-foreground,#a6a6b9);position:fixed;z-index:2147483000;box-sizing:border-box;max-width:calc(100vw - 24px);margin:0;padding:0;border:1px solid var(--border,#3c3c4b);border-radius:20px;background:var(--popover,#1d1e27);color:var(--popover-foreground,#eeeef5);box-shadow:0 20px 70px #0005;overflow:auto;overscroll-behavior:contain;font:13px/1.5 system-ui,sans-serif;isolation:isolate}\n#mari-tts-room-panel[hidden]{display:none!important}\n#mari-tts-room-panel *{box-sizing:border-box}\n#mari-tts-room-panel .mari-tts-room-head{display:flex;align-items:center;justify-content:space-between;padding:22px 22px 15px;gap:12px}\n#mari-tts-room-panel .mari-tts-eyebrow{display:block;font-size:9px;letter-spacing:1.8px;color:var(--tts-accent);font-weight:700}\n#mari-tts-room-panel h2{font-size:19px;letter-spacing:-.6px;line-height:1.3;font-weight:700;margin:5px 0 0;color:var(--tts-ink)}\n#mari-tts-room-panel button{font:inherit;cursor:pointer}\n#mari-tts-room-panel .mari-tts-room-close{display:grid;place-items:center;width:32px;height:32px;padding:0;border:1px solid var(--border,#3c3c4b);border-radius:10px;background:transparent;color:var(--tts-muted);font-size:23px;line-height:1}\n#mari-tts-room-panel .mari-tts-room-close:hover{background:color-mix(in srgb,var(--tts-accent) 12%,transparent);color:var(--tts-ink)}\n#mari-tts-room-panel .mari-tts-room-body{padding:0 22px 18px}\n#mari-tts-room-panel fieldset{border:0;margin:0;padding:0;min-width:0}\n#mari-tts-room-panel legend{font-size:11px;font-weight:600;color:var(--tts-muted);margin:0 0 9px;padding:0}\n#mari-tts-room-panel .mari-tts-mode-card{display:flex;position:relative;align-items:center;justify-content:space-between;gap:10px;padding:13px 14px;margin:0 0 8px;border:1px solid var(--border,#393946);border-radius:13px;cursor:pointer;background:color-mix(in srgb,var(--tts-ink) 3%,transparent);transition:border-color .15s,background .15s}\n#mari-tts-room-panel .mari-tts-mode-card:has(input:checked){border-color:var(--tts-accent);background:color-mix(in srgb,var(--tts-accent) 10%,transparent)}\n#mari-tts-room-panel .mari-tts-mode-card input{position:absolute;opacity:0;width:1px;height:1px;margin:0}\n#mari-tts-room-panel strong{display:block;color:var(--tts-ink);font-size:13px;font-weight:600}\n#mari-tts-room-panel small{display:block;font-size:11px;color:var(--tts-muted);line-height:1.6;margin-top:3px;word-break:keep-all}\n#mari-tts-room-panel .mari-tts-mode-card i{width:16px;height:16px;border:1px solid var(--border,#606071);border-radius:50%;flex-shrink:0}\n#mari-tts-room-panel .mari-tts-mode-card:has(input:checked) i{border:5px solid var(--tts-accent);background:var(--popover,#1d1e27)}\n#mari-tts-room-panel .mari-tts-switch-row{display:flex;align-items:center;gap:12px;position:relative;margin:17px 0 0;padding-top:17px;border-top:1px solid var(--border,#383845);cursor:pointer}\n#mari-tts-room-panel .mari-tts-switch-row>span:first-child{flex:1}\n#mari-tts-room-panel .mari-tts-switch-row input{position:absolute;opacity:0;width:1px;height:1px;margin:0;right:0}\n#mari-tts-room-panel .mari-tts-switch{display:block;width:36px;height:21px;border-radius:20px;background:var(--muted,#484854);padding:3px;flex-shrink:0;transition:background .15s}\n#mari-tts-room-panel .mari-tts-switch:before{content:'';display:block;width:15px;height:15px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:transform .15s}\n#mari-tts-room-panel .mari-tts-switch-row:has(input:checked) .mari-tts-switch{background:var(--tts-accent)}\n#mari-tts-room-panel .mari-tts-switch-row:has(input:checked) .mari-tts-switch:before{transform:translateX(15px)}\n#mari-tts-room-panel .mari-tts-mode-card:has(input:focus-visible),#mari-tts-room-panel .mari-tts-switch-row:has(input:focus-visible),#mari-tts-room-panel button:focus-visible{outline:2px solid var(--tts-accent);outline-offset:3px}\n#mari-tts-room-panel .mari-tts-room-note{font-size:11px;line-height:1.7;color:var(--tts-muted);margin:13px 0 0;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--tts-ink) 4%,transparent)}\n#mari-tts-room-panel .mari-tts-room-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:13px 22px;border-top:1px solid var(--border,#383845)}\n#mari-tts-room-panel .mari-tts-injection-status{font-size:10px;color:var(--tts-muted)}\n#mari-tts-room-panel .mari-tts-injection-status:before{content:'';display:inline-block;width:5px;height:5px;background:var(--tts-muted);border-radius:50%;margin-right:6px;vertical-align:middle}\n#mari-tts-room-panel .mari-tts-injection-status[data-active=true]:before{background:#71ceae}\n#mari-tts-room-panel .mari-tts-rp-reset{font-size:10px;border:0;background:transparent;color:var(--tts-muted);padding:4px 0}\n#mari-tts-room-panel .mari-tts-rp-reset:hover{color:var(--tts-accent)}\n#mari-tts-room-panel .mari-tts-config-error{font-size:11px;margin:10px 0 0;overflow-wrap:anywhere}\n@media(prefers-reduced-motion:reduce){#mari-tts-room-panel *{transition:none!important}}\n";
+  style.textContent+="#mari-tts-room-panel .mari-tts-master-row{border-top:0;margin:0 0 18px;padding:12px;border:1px solid var(--border,#383845);border-radius:12px;background:color-mix(in srgb,var(--tts-accent) 6%,transparent)}\n#mari-tts-room-panel .mari-tts-scope-tag{font-family:inherit;font-style:normal;font-weight:500;font-size:9px;line-height:1.5;color:var(--tts-muted);padding:2px 5px;border:1px solid var(--border,#454553);border-radius:5px;display:inline-block;vertical-align:middle;margin-left:5px}\n#mari-tts-room-panel .mari-tts-master-row:has(input:disabled){cursor:wait;opacity:.7}\n#mari-tts-room-panel .mari-tts-master-refresh{margin:0 0 14px;padding:5px 10px;background:transparent;color:var(--tts-muted);border:1px solid var(--border,#383845);border-radius:8px;font-size:11px}\n#mari-tts-room-panel .mari-tts-master-refresh[hidden],#mari-tts-room-panel .mari-tts-rp-options[hidden]{display:none!important}";
+  function validConfig(cfg){if(!cfg||typeof cfg.enabled!=='boolean')throw new Error('TTS 설정 상태를 확인하지 못했습니다.');return cfg;}
+  function updateMaster(cfg){master.enabled=validConfig(cfg).enabled;if(instructionState)instructionState={...instructionState,enabled:master.enabled};paintPanel();}
+  function findQueryClient(){
+    if(master.client)return master.client;
+    const stack=[],seen=new Set();
+    for(const el of [document.getElementById('root'),...document.body.children].filter(Boolean))for(const key of Object.keys(el))if(/^__react(Container|Fiber)\$/.test(key))stack.push(el[key]);
+    while(stack.length&&seen.size<16000){
+      const f=stack.pop();if(!f||seen.has(f))continue;seen.add(f);
+      const candidates=[f.memoizedProps?.client,f.memoizedProps?.value];let dep=f.dependencies?.firstContext;
+      for(let n=0;dep&&n<30;n++,dep=dep.next)candidates.push(dep.memoizedValue);
+      const client=candidates.find(c=>c&&typeof c.getQueryData==='function'&&typeof c.setQueryData==='function'&&typeof c.getQueryCache==='function');
+      if(client){master.client=client;master.unsubscribe=client.getQueryCache().subscribe(()=>{const cfg=client.getQueryData(['tts','config']);if(!stopped&&!master.busy&&typeof cfg?.enabled==='boolean')updateMaster(cfg);});return client;}
+      stack.push(f.child,f.sibling,f.return,f.current,f.stateNode?.current);
+    }
+    return null;
+  }
+  async function refreshMaster(){
+    if(stopped||master.busy)return;if(master.refresh)return master.refresh;
+    master.refresh=(async()=>{try{const cfg=validConfig(await api('/tts/config'));if(!stopped&&!master.busy){statusError='';updateMaster(cfg);findQueryClient();}}catch(e){if(!stopped&&!master.busy){master.enabled=null;notice(e);}}finally{master.refresh=null;paintPanel();}})();
+    return master.refresh;
+  }
+  async function setMasterTts(value){
+    if(stopped||master.busy)return;clearTimeout(master.reloadTimer);master.reloadTimer=null;master.busy=true;statusError='';paintPanel();let saved=false;
+    try{
+      if(master.refresh)await master.refresh;
+      const cfg=validConfig(await api('/tts/config'));
+      const next={...cfg,enabled:!!value};
+      // These flags are runtime-only; keep all persisted voice/profile fields.
+      delete next.preserveEmotionIndicators;
+      const client=findQueryClient();
+      if(cfg.enabled!==next.enabled){await api('/tts/config','PUT',next);saved=true;}
+      if(stopped)return;
+      const confirmed=validConfig(await api('/tts/config'));if(stopped)return;
+      providerPromise=null;updateMaster(confirmed);
+      if(!confirmed.enabled)T.stopAudio();
+      if(client){await client.cancelQueries?.({queryKey:['tts','config'],exact:true});if(stopped)return;client.setQueryData(['tts','config'],{...confirmed,skipBracketedText:false,preserveEmotionIndicators:true});}
+      if(confirmed.enabled!==!!value)throw new Error('TTS 상태가 요청과 다릅니다. 현재 상태를 다시 확인하세요.');
+      if(!client&&saved){statusError='TTS 설정 적용 · 화면을 새로고침합니다.';master.reloadTimer=setTimeout(()=>{if(!stopped)window.location.reload();},700);}
+    }catch(e){if(!stopped){master.enabled=null;if(saved)void master.client?.invalidateQueries?.({queryKey:['tts','config'],exact:true});notice(new Error((saved?'설정 저장 후 상태 확인 실패: ':'TTS 변경 실패: ')+e.message));}}
+    finally{master.busy=false;paintPanel();}
+  }
+  const refreshOpenMaster=()=>{const panel=document.getElementById('mari-tts-room-panel');if(panel&&!panel.hidden)void refreshMaster();};
+  window.addEventListener('focus',refreshOpenMaster);
+  function setStyle(node, values){for(const [key,value] of Object.entries(values))if(node.style[key]!==value)node.style[key]=value;}
+  function closeRoomPanel(){const panel=document.getElementById('mari-tts-room-panel');if(panel)panel.hidden=true;const icon=document.querySelector('.mari-tts-rp-toolbar>button');if(icon)icon.setAttribute('aria-expanded','false');}
+  function positionRoomPanel(){
+    const panel=document.getElementById('mari-tts-room-panel');if(!panel||panel.hidden)return;
+    const bar=document.querySelector('.mari-tts-rp-toolbar');
+    const rect=bar?.getBoundingClientRect();
+    const viewport=window.visualViewport;
+    const width=viewport?.width||window.innerWidth,height=viewport?.height||window.innerHeight;
+    const vx=viewport?.offsetLeft||0,vy=viewport?.offsetTop||0;
+    const pw=Math.min(336,width-24);setStyle(panel,{width:pw+'px',maxHeight:Math.max(100,height-24)+'px'});
+    const ph=Math.min(panel.offsetHeight,height-24);
+    // Drawer hides the launcher; center the independently mounted panel then.
+    const visible=!!rect?.width&&!!rect?.height;
+    const left=visible?Math.max(vx+12,Math.min(rect.right-pw,vx+width-pw-12)):vx+(width-pw)/2;
+    const top=visible?Math.max(vy+12,Math.min(rect.bottom+10,vy+height-ph-12)):vy+Math.max(12,(height-ph)/2);
+    setStyle(panel,{left:Math.round(left)+'px',top:Math.round(top)+'px'});
+  }
   function mountToolbar(){
     const surface=document.querySelector('[data-component="ChatArea.Roleplay"],[data-chat-mode="roleplay"]');
     const settings=document.querySelector('[data-chat-settings-button]');
-    const isRp=!!surface||(T.getMode()==='roleplay'&&!!settings);
-    if(!isRp){document.querySelectorAll('.mari-tts-rp-toolbar').forEach(e=>e.remove());return;}
+    if(!C.supportedMode(T.getMode())){closeRoomPanel();document.querySelectorAll('.mari-tts-rp-toolbar,#mari-tts-room-panel').forEach(e=>e.remove());return;}
     let bar=document.querySelector('.mari-tts-rp-toolbar');
     if(!bar){
-      bar=document.createElement('span');bar.className='mari-tts-rp-toolbar';
-      const icon=document.createElement('button');icon.type='button';icon.textContent='≡';icon.title='RP 음성 설정';icon.setAttribute('aria-label','RP 음성 설정');icon.setAttribute('aria-expanded','false');
-      const panel=document.createElement('div');panel.className='mari-tts-rp-popover';panel.hidden=true;panel.setAttribute('role','dialog');panel.setAttribute('aria-label','RP 음성 설정');
-      const title=document.createElement('strong');title.textContent='RP 음성 설정';const close=document.createElement('button');close.type='button';close.textContent='×';close.title='닫기';
-      const hide=()=>{panel.hidden=true;icon.setAttribute('aria-expanded','false');};close.onclick=hide;
-      icon.onclick=()=>{panel.hidden=!panel.hidden;icon.setAttribute('aria-expanded',String(!panel.hidden));};
-      const toggle=document.createElement('select');toggle.className='mari-tts-rp-enable';toggle.setAttribute('aria-label','이 방 대사별 음성 버튼 상태');for(const [value,label] of [['enabled','활성화됨'],['disabled','비활성화됨']]){const option=document.createElement('option');option.value=value;option.textContent=label;toggle.append(option);}toggle.onchange=()=>setRoomControls(toggle.value);
-      panel.onkeydown=e=>{if(e.key==='Escape'){hide();icon.focus();}};const reset=document.createElement('button');reset.type='button';reset.className='mari-tts-rp-reset';reset.textContent='이 방 아이콘 위치 초기화';reset.onclick=()=>{saveRoom({position:null});queueScan();};
-      title.textContent='이 방 RP 음성 설정';
-      const modeLabel=document.createElement('label');modeLabel.textContent='화자 구분 방식';modeLabel.append(modeSelect());
-      const taggedHelp=document.createElement('p');taggedHelp.className='mari-tts-mode-help';taggedHelp.textContent='태그별 화자: AI가 캐릭터와 페르소나의 대사를 함께 쓰는 RP에 사용합니다. 각 대사 태그의 ID로 캐릭터 또는 페르소나에 연결된 보이스를 선택합니다.';
-      const nativeHelp=document.createElement('p');nativeHelp.className='mari-tts-mode-help';nativeHelp.textContent='메시지 화자: 한 메시지의 모든 대사를 그 메시지 화자의 보이스로 읽습니다. 대사별 버튼은 유지되지만, 대사 안의 캐릭터와 페르소나는 따로 구분하지 않습니다.';
-      const controlsLabel=document.createElement('label');controlsLabel.textContent='대사별 음성 버튼';controlsLabel.append(toggle);
-      const controlsHelp=document.createElement('p');controlsHelp.className='mari-tts-mode-help';controlsHelp.textContent='비활성화됨: 대사 옆 생성·재생성·재생·정지·보이스 설정 버튼만 숨깁니다. 화자 태그와 감정태그 숨김, 출력 지침, 번역 보호는 유지됩니다.';
-      const error=document.createElement('p');error.className='mari-tts-config-error';error.setAttribute('aria-live','polite');error.hidden=true;
-      panel.append(title,close,modeLabel,taggedHelp,nativeHelp,controlsLabel,controlsHelp,reset,error);bar.append(icon,panel);
+      bar=document.createElement('span');bar.className='mari-tts-rp-toolbar mari-tts-rp-corner';
+      const icon=document.createElement('button');icon.type='button';icon.className='mari-tts-room-launcher';icon.title='음성 설정 · 드래그로 이동';icon.setAttribute('aria-label','음성 설정');icon.setAttribute('aria-expanded','false');icon.setAttribute('aria-controls','mari-tts-room-panel');
+      icon.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 10v4m4-7v10m4-14v18m4-14v10m4-7v4"/></svg>';
+      const panel=document.createElement('section');panel.id='mari-tts-room-panel';panel.className='mari-tts-rp-popover';panel.hidden=true;panel.setAttribute('role','dialog');panel.setAttribute('aria-label','음성 설정');
+      panel.innerHTML=`<header class="mari-tts-room-head"><div><span class="mari-tts-eyebrow">VOICE CONTROL</span><h2>음성 설정</h2></div><button type="button" class="mari-tts-room-close" aria-label="닫기">×</button></header>
+        <div class="mari-tts-room-body"><label class="mari-tts-switch-row mari-tts-master-row"><span><strong>TTS 연결 <em class="mari-tts-scope-tag">전체 방</em></strong><small class="mari-tts-master-status" aria-live="polite">상태 확인 중</small></span><input class="mari-tts-master-enable" aria-label="TTS 연결" type="checkbox" role="switch" disabled><span class="mari-tts-switch" aria-hidden="true"></span></label><button type="button" class="mari-tts-master-refresh" hidden>상태 다시 확인</button><div class="mari-tts-rp-options"><fieldset class="mari-tts-mode-group"><legend>화자 구분</legend>
+          <label class="mari-tts-mode-card"><input type="radio" name="mari-tts-room-mode" value="tagged"><span><strong>캐릭터 + 페르소나</strong><small>대사 태그로 화자를 구분해 각 보이스로 읽어요.</small></span><i aria-hidden="true"></i></label>
+          <label class="mari-tts-mode-card"><input type="radio" name="mari-tts-room-mode" value="native"><span><strong>메시지 화자</strong><small>한 메시지의 대사를 같은 보이스로 읽어요.</small></span><i aria-hidden="true"></i></label></fieldset>
+          <label class="mari-tts-switch-row"><span><strong>대사별 음성 버튼</strong><small>생성 · 재생 · 정지 버튼 표시</small></span><input class="mari-tts-rp-enable" type="checkbox" role="switch"><span class="mari-tts-switch" aria-hidden="true"></span></label>
+          <p class="mari-tts-room-note">버튼을 숨겨도 감정 태그 숨김과 음성 지침은 유지돼요.</p></div>
+          <p class="mari-tts-config-error" aria-live="polite" hidden></p></div>
+        <footer class="mari-tts-room-foot"><span class="mari-tts-injection-status" role="status">다음 응답부터 적용</span><button type="button" class="mari-tts-rp-reset">위치 초기화</button></footer>`;
+      panel.querySelector('.mari-tts-room-close').onclick=()=>{closeRoomPanel();if(icon.getClientRects().length)icon.focus();};
+      icon.onclick=()=>{panel.hidden=!panel.hidden;icon.setAttribute('aria-expanded',String(!panel.hidden));if(!panel.hidden){void refreshMaster();paintPanel();positionRoomPanel();panel.querySelector('.mari-tts-room-close').focus({preventScroll:true});}};
+      for(const input of panel.querySelectorAll('[name="mari-tts-room-mode"]'))input.onchange=()=>{if(input.checked)setRpMode(input.value);};
+      panel.querySelector('.mari-tts-master-enable').onchange=e=>{void setMasterTts(e.target.checked);};
+      panel.querySelector('.mari-tts-master-refresh').onclick=()=>{void refreshMaster();};
+      panel.querySelector('.mari-tts-rp-enable').onchange=e=>setRoomControls(e.target.checked?'enabled':'disabled');
+      panel.querySelector('.mari-tts-rp-reset').onclick=()=>{saveRoom({position:null});queueScan();};
+      panel.onkeydown=e=>{if(e.key==='Escape'){closeRoomPanel();if(icon.getClientRects().length)icon.focus();}};
       let drag=null,suppressClick=false;
       const click=icon.onclick;icon.onclick=event=>{if(suppressClick){suppressClick=false;return;}click(event);};
-      icon.onpointerdown=event=>{if(event.button!==0||!activeChatId())return;const rect=bar.getBoundingClientRect();drag={id:event.pointerId,room:activeChatId(),x:event.clientX,y:event.clientY,left:parseFloat(bar.style.left)||rect.left,top:parseFloat(bar.style.top)||rect.top,moved:false};icon.setPointerCapture?.(event.pointerId);};
-      icon.onpointermove=event=>{if(!drag||drag.id!==event.pointerId)return;const dx=event.clientX-drag.x,dy=event.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>5)drag.moved=true;if(!drag.moved)return;event.preventDefault();bar.dataset.dragging='1';bar.style.left=Math.max(8,Math.min(drag.left+dx,window.innerWidth-40))+'px';bar.style.top=Math.max(8,Math.min(drag.top+dy,window.innerHeight-40))+'px';};
-      const finish=event=>{if(!drag||drag.id!==event.pointerId)return;if(drag.moved){saveRoom({position:{x:parseFloat(bar.style.left)/Math.max(1,window.innerWidth-32),y:parseFloat(bar.style.top)/Math.max(1,window.innerHeight-32)}},drag.room);suppressClick=true;}icon.releasePointerCapture?.(event.pointerId);drag=null;delete bar.dataset.dragging;queueScan();};
-      icon.onpointerup=finish;icon.onpointercancel=finish;icon.title='이 방 RP 음성 설정 · 드래그로 이동';
-      bar.classList.add('mari-tts-rp-corner');document.body.append(bar);
+      icon.onpointerdown=event=>{
+        // Drawer forwards synthetic pointerdown to its hidden source button.
+        // That is activation, not a drag of the real launcher.
+        if(!event.isTrusted||event.button!==0||!activeChatId())return;
+        const rect=bar.getBoundingClientRect();drag={id:event.pointerId,room:activeChatId(),x:event.clientX,y:event.clientY,left:rect.left,top:rect.top,moved:false};icon.setPointerCapture?.(event.pointerId);
+      };
+      icon.onpointermove=event=>{if(!drag||drag.id!==event.pointerId)return;const dx=event.clientX-drag.x,dy=event.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>5)drag.moved=true;if(!drag.moved)return;event.preventDefault();bar.dataset.dragging='1';setStyle(bar,{left:Math.max(8,Math.min(drag.left+dx,window.innerWidth-40))+'px',top:Math.max(8,Math.min(drag.top+dy,window.innerHeight-40))+'px'});positionRoomPanel();};
+      const finish=event=>{if(!drag||drag.id!==event.pointerId)return;if(drag.moved){saveRoom({position:{x:parseFloat(bar.style.left)/Math.max(1,window.innerWidth-32),y:parseFloat(bar.style.top)/Math.max(1,window.innerHeight-32)}},drag.room);suppressClick=true;}if(icon.hasPointerCapture?.(event.pointerId))icon.releasePointerCapture(event.pointerId);drag=null;delete bar.dataset.dragging;queueScan();};
+      icon.onpointerup=finish;icon.onpointercancel=finish;bar.append(icon);
+      // The drawer owns launcher visibility. The dialog is a separate portal,
+      // excluded from drawer collection by its dialog role.
+      document.body.append(bar,panel);
     }
-    // Portal outside ME's overflow-hidden and isolated chat stacking contexts.
-    const rect=settings?.getBoundingClientRect(),bounds=surface?.getBoundingClientRect();
-    const position=roomSettings().position;
+    const rect=settings?.getBoundingClientRect(),bounds=surface?.getBoundingClientRect(),position=roomSettings().position;
     const top=position?position.y*(window.innerHeight-32):(rect?.height?rect.top:(bounds?.height?bounds.top+8:8));
     const left=position?position.x*(window.innerWidth-32):(rect?.width?rect.left-38:(bounds?.width?bounds.right-76:window.innerWidth-76));
-    if(!bar.dataset.dragging)Object.assign(bar.style,{position:'fixed',top:Math.max(8,Math.min(top,window.innerHeight-42))+'px',left:Math.max(8,Math.min(left,window.innerWidth-42))+'px',right:'auto',zIndex:'75',display:'inline-flex',width:'32px',height:'32px',pointerEvents:'auto'});
-    Object.assign(bar.firstChild.style,{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'32px',height:'32px',padding:'0',border:'1px solid var(--border,#888)',borderRadius:'50%',background:'var(--popover,#222)',color:'var(--popover-foreground,#eee)',font:'inherit',cursor:'pointer'});
-    Object.assign(bar.querySelector('.mari-tts-rp-popover').style,{left:parseFloat(bar.style.left)<280?'0':'auto',right:parseFloat(bar.style.left)<280?'auto':'0',top:parseFloat(bar.style.top)>window.innerHeight-180?'auto':'100%',bottom:parseFloat(bar.style.top)>window.innerHeight-180?'100%':'auto',maxHeight:'80vh',overflowY:'auto'});
-    const select=bar.querySelector('.mari-tts-rp-mode-select');if(select.value!==roomSettings().rpMode)select.value=roomSettings().rpMode;
-    const toggle=bar.querySelector('.mari-tts-rp-enable');toggle.value=roomSettings().enabled?'enabled':'disabled';
+    // Never write display: the drawer hides this root with display:none!important.
+    if(!bar.dataset.dragging)setStyle(bar,{position:'fixed',top:Math.max(8,Math.min(top,window.innerHeight-42))+'px',left:Math.max(8,Math.min(left,window.innerWidth-42))+'px',right:'auto',zIndex:'75',width:'32px',height:'32px',pointerEvents:'auto'});
+    const panel=document.getElementById('mari-tts-room-panel');
+    panel.querySelector('.mari-tts-rp-options').hidden=T.getMode()!=='roleplay';
+    for(const input of panel.querySelectorAll('[name="mari-tts-room-mode"]'))input.checked=input.value===roomSettings().rpMode;
+    panel.querySelector('.mari-tts-rp-enable').checked=!!roomSettings().enabled;
+    positionRoomPanel();
   }
-  const dismissPopover=event=>{for(const bar of document.querySelectorAll('.mari-tts-rp-toolbar'))if(!bar.contains(event.target)){bar.querySelector('.mari-tts-rp-popover').hidden=true;bar.firstChild.setAttribute('aria-expanded','false');}};
+  const dismissPopover=event=>{const bar=document.querySelector('.mari-tts-rp-toolbar'),panel=document.getElementById('mari-tts-room-panel');if(!bar?.contains(event.target)&&!panel?.contains(event.target))closeRoomPanel();};
   document.addEventListener('pointerdown',dismissPopover);
   window.addEventListener('resize',queueScan);
+  window.visualViewport?.addEventListener('resize',positionRoomPanel);
+  window.visualViewport?.addEventListener('scroll',positionRoomPanel);
   const syncRoomStorage=event=>{if(event.key!==ROOM_LS)return;try{roomOptions=JSON.parse(event.newValue||'{}');}catch{return;}restoreDom();queueScan();paintPanel();};
   window.addEventListener('storage',syncRoomStorage);
   function paintPanel() {
     document.querySelectorAll('.mari-tts-upgrade-panel').forEach(e=>e.remove());
+    const input=document.querySelector('.mari-tts-master-enable');if(input){input.checked=master.enabled===true;input.disabled=master.busy||master.enabled===null;input.setAttribute('aria-busy',String(master.busy));const label=document.querySelector('.mari-tts-master-status');const text=master.busy?'적용 중…':master.enabled===null?'상태를 확인하세요':master.enabled?'켜짐 · 자동·수동 음성 생성':'꺼짐 · 음성 생성 중지';if(label.textContent!==text)label.textContent=text;document.querySelector('.mari-tts-master-refresh').hidden=master.enabled!==null||master.busy;}
+    const badge=document.querySelector('.mari-tts-injection-status');if(badge){const label=instructionState?.chatId===activeChatId()?(instructionState.enabled?'음성 지침 적용됨':'ME TTS 꺼짐'):'다음 응답부터 적용';if(badge.textContent!==label)badge.textContent=label;badge.dataset.active=String(instructionState?.chatId===activeChatId()&&!!instructionState.enabled);}
     const error=document.querySelector('.mari-tts-config-error');if(error){if(error.textContent!==statusError)error.textContent=statusError;error.hidden=!statusError;}
   }
   function restoreDom(){for(const e of mounted.keys())e.remove();mounted.clear();for(const e of fallbackRows)e.remove();fallbackRows.clear();for(const e of hidden)if(e.isConnected)e.replaceWith(...e.childNodes);hidden.clear();clearViews();}
   const observer=new MutationObserver(queueScan);observer.observe(document.body,{childList:true,characterData:true,attributes:true,attributeFilter:['data-message-id','data-chat-mode'],subtree:true});
   const timer=setInterval(queueScan,2500);
-  function dispose(options={}){if(stopped)return;stopped=true;observer.disconnect();clearInterval(timer);document.removeEventListener('pointerdown',dismissPopover);window.removeEventListener('resize',queueScan);window.removeEventListener('storage',syncRoomStorage);if(window.fetch===fetchWrapper)window.fetch=baseFetch;restoreDom();style.remove();document.querySelectorAll('.mari-tts-upgrade-panel,.mari-tts-rp-toolbar').forEach(e=>e.remove());if(!options.keepRules)void removeFilters().catch(e=>console.warn('[TTS 4.1] 필터 정리 실패',e));}
+  function dispose(options={}){if(stopped)return;stopped=true;clearTimeout(master.reloadTimer);master.unsubscribe?.();window.removeEventListener('focus',refreshOpenMaster);observer.disconnect();clearInterval(timer);document.removeEventListener('pointerdown',dismissPopover);window.removeEventListener('resize',queueScan);window.visualViewport?.removeEventListener('resize',positionRoomPanel);window.visualViewport?.removeEventListener('scroll',positionRoomPanel);window.removeEventListener('storage',syncRoomStorage);if(window.fetch===fetchWrapper)window.fetch=baseFetch;restoreDom();style.remove();document.querySelectorAll('.mari-tts-upgrade-panel,.mari-tts-rp-toolbar,#mari-tts-room-panel').forEach(e=>e.remove());if(!options.keepRules)void removeFilters().catch(e=>console.warn('[TTS 4.1] 필터 정리 실패',e));}
   globalThis.__marinaraDialogueUpgrade={dispose,parse:C.parse,prepareGeneration,restoreSpeech};
   // Display-only filtering has no persisted cross-mode regex rules.
   if(typeof marinara!=='undefined')marinara.onCleanup(()=>dispose({keepRules:true}));
